@@ -1,0 +1,58 @@
+/* Reuse account-dialogue's native cards, form controls, row typography and spacing. */
+body { margin: 0; background: transparent; color: var(--cp-color-text); }
+.uf-page { display: flex; flex-direction: column; gap: 20px; width: 100%; min-width: 0; margin-inline: auto; padding: 4px 0 20px; }
+.uf-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.uf-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.uf-board { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; align-items: stretch; }
+.uf-board > * { min-width: 0; }
+.uf-target-card { min-height: 438px; }
+.uf-field { width: 100%; min-width: 0; max-width: 100%; }
+.uf-list-body { display: flex; flex-direction: column; gap: 12px; min-width: 0; flex: 1; }
+.uf-selection-scroll { min-width: 0; }
+.uf-selection-list { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.uf-selection-row { display: flex; width: 100%; min-width: 0; padding: 11px 4px; box-sizing: border-box; }
+.uf-list-label { display: block; overflow-wrap: anywhere; line-height: 1.45; }
+.uf-list-meta { display: block; margin-top: 3px; color: var(--cp-color-text-secondary); font-size: 12px; line-height: 1.3; font-weight: 400; }
+.uf-card-note { display: flex; justify-content: space-between; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: auto; }
+.uf-rule-form { display: flex; flex-direction: column; gap: 16px; flex: 1; min-width: 0; }
+.uf-model-list { display: flex; flex-wrap: wrap; gap: 12px 20px; padding: 4px 0; }
+.uf-tier { display: flex; align-items: center; gap: 12px; }
+.uf-save-area { display: flex; flex-direction: column; gap: 10px; margin-top: auto; }
+.uf-save-button { width: 100%; }
+.uf-secondary { color: var(--cp-color-text-secondary); font-size: var(--cp-font-size, 14px); line-height: 1.6; }
+.uf-footnote { color: var(--cp-color-text-secondary); font-size: 12px; line-height: 1.6; margin: 0; }
+.uf-push-bottom { margin-top: auto; }
+.uf-feedback, .uf-error { margin: 0; font-size: 13px; line-height: 1.65; overflow-wrap: anywhere; }
+.uf-feedback.success { color: var(--cp-color-success-text); }
+.uf-feedback.danger, .uf-error { color: var(--cp-color-error-text); }
+.uf-rules-table { min-height: 184px; }
+.uf-table-name { font-weight: 600; overflow-wrap: anywhere; }
+.uf-table-text { display: block; max-height: 100px; overflow: auto; overflow-wrap: anywhere; line-height: 1.5; }
+.uf-model-tags { display: flex; gap: 4px; flex-wrap: wrap; }
+.uf-details { display: grid; gap: 16px; margin: 0 0 20px; }
+.uf-details > div { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 12px; }
+.uf-details dt { color: var(--cp-color-text-secondary); }
+.uf-details dd { margin: 0; overflow-wrap: anywhere; }
+.uf-detail-note { margin: 12px 0; font-size: 13px; line-height: 1.65; }
+@media (max-width: 900px) {
+  .uf-board { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+  .uf-settings-card { grid-column: 1 / -1; min-height: auto; }
+}
+@media (max-width: 560px) {
+  .uf-page { gap: 16px; }
+  .uf-board { grid-template-columns: minmax(0, 1fr); }
+  .uf-target-card { min-height: auto; }
+  .uf-details > div { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+}
+/* Keep the reference plugin's visible-iframe dialog geometry on public ARIA roots. */
+body[data-dialogue-viewport] > [role="presentation"] {
+  grid-template-columns: minmax(0, 1fr);
+  top: var(--dialogue-visible-top, 0px); left: var(--dialogue-visible-left, 0px);
+  right: auto; bottom: auto;
+  width: var(--dialogue-visible-width, 100vw); height: var(--dialogue-visible-height, 100dvh);
+}
+body[data-dialogue-viewport] [aria-modal="true"] { max-height: max(1px, calc(var(--dialogue-visible-height, 100dvh) - 1.5rem)); }
+@media (min-width: 640px) {
+  body[data-dialogue-viewport] [aria-modal="true"] { max-height: max(1px, calc(var(--dialogue-visible-height, 100dvh) - 3rem)); }
+}
+

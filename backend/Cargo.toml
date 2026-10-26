@@ -1,0 +1,25 @@
+[package]
+name = "cpr-ultrafast"
+version = "0.2.3"
+edition = "2024"
+license = "Apache-2.0"
+rust-version = "1.99"
+autotests = false
+
+[dependencies]
+gateway-plugin-sdk = { path = "../vendor/gateway-plugin-sdk", features = ["io"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = { version = "1.0.150", features = ["raw_value"] }
+thiserror = "2.0.18"
+tokio = { version = "1.52.3", default-features = false, features = ["io-std", "io-util", "rt", "macros", "sync", "time"] }
+
+[[test]]
+name = "policy"
+path = "../Scripts/policy.rs"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+
+

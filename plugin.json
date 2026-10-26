@@ -1,0 +1,109 @@
+{
+  "manifestVersion": 2,
+  "name": "ultrafast",
+  "displayName": "Ultrafast 服务档位",
+  "publisher": "donzy",
+  "version": "0.2.3",
+  "description": "按账号、客户端 Key 和模型在后端强制请求 Ultrafast，独立管理页维护规则",
+  "license": "Apache-2.0",
+  "author": "Donzy",
+  "engines": {
+    "codex-proxy-rs": ">=3.32.0, <4.0.0"
+  },
+  "main": "bin/plugin",
+  "runtime": "trustedProcess",
+  "contributes": {
+    "middleware": {
+      "version": 6,
+      "stages": [
+        "attempt"
+      ],
+      "inputFormats": [
+        "openai"
+      ],
+      "outputFormats": [
+        "openai"
+      ]
+    },
+    "management": {
+      "version": 2
+    }
+  },
+  "configurationSchema": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  },
+  "resources": {
+    "web/index.html": "text/html",
+    "web/app.js": "text/javascript",
+    "web/app.css": "text/css"
+  },
+  "state": [
+    {
+      "namespace": "ultrafast-rules",
+      "schemaVersion": 1,
+      "schema": {
+        "type": "object",
+        "required": [
+          "rules"
+        ],
+        "properties": {
+          "rules": {
+            "type": "array",
+            "maxItems": 64,
+            "items": {
+              "type": "object",
+              "required": [
+                "name",
+                "models"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                "accountIds": {
+                  "type": "array",
+                  "maxItems": 128,
+                  "items": {
+                    "type": "string",
+                    "maxLength": 128
+                  }
+                },
+                "clientKeyIds": {
+                  "type": "array",
+                  "maxItems": 128,
+                  "items": {
+                    "type": "string",
+                    "maxLength": 128
+                  }
+                },
+                "models": {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 2,
+                  "uniqueItems": true,
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "gpt-6-astra",
+                      "gpt-6.1-sol"
+                    ]
+                  }
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "maximumRecords": 1,
+      "maximumBytes": 65536,
+      "maximumValueBytes": 65536,
+      "migratesFrom": []
+    }
+  ]
+}
