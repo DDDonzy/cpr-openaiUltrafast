@@ -7,8 +7,8 @@
 - 版本：**0.2.3**
 - 声明宿主范围：`>=3.32.0, <4.0.0`，RPC v6 / middleware v6 / management v2
 - SDK 固定于官方 v3.32.0，未改 SDK 实现
-- Linux ARM64 musl 安装包，目标为主 SG 的 ARM64 环境
-- 2026-10-26 针对主 SG CPR 3.32.0 的协议 v6 兼容性重建 0.2.3；保持空规则、入口绑定及私有状态格式不变，未测试真实上游加速权益
+- Linux ARM64 musl 安装包，目标为 Linux ARM64 环境
+- 2026-10-26 针对 CPR 3.32.0 的协议 v6 兼容性重建 0.2.3；保持规则、入口绑定及私有状态格式不变，未测试真实上游加速权益
 - 上述版本范围是加载约束，不承诺所有未来 3.x 宿主都已经测试
 
 ## 配置入口
@@ -78,8 +78,8 @@
 需要 Rust 1.99+、Node 24+、Python 3 及 Rust `aarch64-unknown-linux-musl` 目标。使用前端锁文件安装依赖后运行：
 
 ```powershell
-npm --prefix E:/oracle/cpr-ultrafast/frontend ci --ignore-scripts
-python E:/oracle/cpr-ultrafast/Scripts/build.py
+npm --prefix frontend ci --ignore-scripts
+python Scripts/build.py
 ```
 
 构建入口执行 Vue 严格模板检查、Vite、前端状态测试、Rust fmt / Clippy / 测试、真实插件进程的中间件与管理接口测试，再打包 ARM64 制品。安装包仅包含 `plugin.json`、`bin/plugin` 与声明的 web 资源，不包含测试夹具或凭据。
@@ -87,9 +87,9 @@ python E:/oracle/cpr-ultrafast/Scripts/build.py
 隔离页面验收：
 
 ```powershell
-python E:/oracle/cpr-ultrafast/Scripts/preview.py
+python Scripts/preview.py
 ```
 
 浏览器打开 `http://127.0.0.1:18949/embedded`，浅色主题加 `?theme=light`。预览通过真实本地插件进程执行管理请求，但账号、Key、绑定与状态均为虚构内存数据，不连接生产 CPR 或模型，也不能代替目标宿主验收。
 
-产物为 `E:/oracle/cpr-ultrafast/dist/donzy.ultrafast-0.2.3-aarch64-unknown-linux-musl.tar.gz` 及对应 SHA256 文件。生产升级前应备份实例与私有状态，保持原有空规则和绑定，不自动恢复任何账号的加速规则。
+产物为 `dist/donzy.ultrafast-0.2.3-aarch64-unknown-linux-musl.tar.gz` 及对应 SHA256 文件。生产升级前应备份实例与私有状态；插件不会自动恢复或修改账号的加速规则。
