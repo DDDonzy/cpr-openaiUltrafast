@@ -66,7 +66,7 @@ fn unsafe_or_malformed_configuration_is_rejected() {
         json!({}),
         json!({"rules":[],"unknown":true}),
         json!({"rules":[{"name":"all","models":["gpt-6-astra"]}]}),
-        json!({"rules":[{"name":"unsupported","accountIds":["a"],"models":["gpt-6-luna"]}]}),
+        json!({"rules":[{"name":"invalid model","accountIds":["a"],"models":[" gpt-6-luna"]}]}),
         json!({"rules":[{"name":"empty","accountIds":[""],"models":["gpt-6-astra"]}]}),
         json!({"rules":[{"name":"no models","accountIds":["a"],"models":[]}]}),
     ] {
@@ -179,5 +179,38 @@ fn already_ultrafast_is_preserved_without_copy_or_reserialization() {
         &br#"{"service_tier":"ultra\u0066ast"}"#[..],
     ] {
         assert!(ultrafast(input).unwrap().is_none());
+    }
+}
+
+#[test]
+fn arbitrary_selected_models_are_matched_without_a_baked_in_catalog() {
+    let models = vec![
+        "gpt-6-luna",
+        "custom/model:latest",
+        "future-model",
+        "gpt-6.1-sol",
+    ];
+    let config = Configuration::parse(
+        json!({"rules":[{"name":"custom", "clientKeyIds":["key_a"], "models":models}]}),
+    )
+    .unwrap();
+    for model in models {
+        let mut h = head();
+        h.model = Some(model.into());
+        assert!(config.matches(&h));
+    }
+    for models in [
+        json!(["bad model"]),
+        json!(["bad\nmodel"]),
+        json!(["x", "x"]),
+        json!(["x".repeat(129)]),
+        json!((0..257).map(|i| format!("model-{i}")).collect::<Vec<_>>()),
+    ] {
+        assert!(
+            Configuration::parse(
+                json!({"rules":[{"name":"bad", "accountIds":["a"], "models":models}]})
+            )
+            .is_err()
+        );
     }
 }

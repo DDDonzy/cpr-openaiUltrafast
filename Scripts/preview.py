@@ -7,6 +7,7 @@ from test_management import ManagementHarness
 R=Path(__file__).resolve().parent.parent
 PORT=18949
 h=ManagementHarness({'rules':[]})
+h.fixture_models=['gpt-6-astra','gpt-6.1-sol','gpt-6-luna','gpt-6-sol','gpt-5.6-terra','custom/provider-model','future-model-preview']
 # Fake persistence belongs only to this harness process
 h.doc={'rules':[]};h.version=3
 h.fixture_keys=[{'id':'key_a' if i==0 else f'key_demo_{i}','name':name,'enabled':True} for i,name in enumerate(['Primary','Team Workspace','Research','Development','Evaluation','Personal','Project Alpha','Project Beta'])]

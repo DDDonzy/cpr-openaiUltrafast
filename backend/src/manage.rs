@@ -12,6 +12,7 @@ use gateway_plugin_sdk::{
     client::{HostClient, HttpBody, HttpFrame, HttpRequest, TypedCall},
 };
 use serde_json::{Value, json};
+use std::collections::BTreeSet;
 const MAX_RESPONSE: usize = 4 * 1024 * 1024;
 fn fault(message: &'static str) -> PluginFault {
     PluginFault::new(ErrorCode::Fault, message)
@@ -25,6 +26,16 @@ pub async fn native(
     method: &str,
     uri: String,
     body: Option<Value>,
+) -> Result<Value, PluginFault> {
+    native_with_timeout(host, method, uri, body, 20_000).await
+}
+
+async fn native_with_timeout(
+    host: &HostClient,
+    method: &str,
+    uri: String,
+    body: Option<Value>,
+    timeout_ms: u64,
 ) -> Result<Value, PluginFault> {
     let bytes = body
         .map(|b| serde_json::to_vec(&b))
@@ -46,7 +57,7 @@ pub async fn native(
             version: Version::Http11,
             headers,
             settings: Value::Null,
-            timeout_ms: Some(20_000),
+            timeout_ms: Some(timeout_ms),
             body: HttpBody::from_bytes(bytes),
         })
         .await?;
@@ -64,7 +75,20 @@ pub async fn native(
     let value: Value =
         serde_json::from_slice(&data).map_err(|_| fault("宿主管理响应不是有效 JSON"))?;
     if !(200..300).contains(&status) || value.get("code").and_then(Value::as_i64) != Some(200) {
-        return Err(fault("原生管理操作未完成"));
+        return Err(PluginFault::new(
+            if status == 409 {
+                ErrorCode::Conflict
+            } else if status == 400 || status == 422 {
+                ErrorCode::InvalidInput
+            } else {
+                ErrorCode::Fault
+            },
+            if status == 409 {
+                "宿主配置已变化，请刷新后重试"
+            } else {
+                "原生管理操作未完成，请核对配置或稍后重试"
+            },
+        ));
     }
     Ok(value.get("data").cloned().unwrap_or(Value::Null))
 }
@@ -125,7 +149,7 @@ pub async fn accounts(host: &HostClient) -> Result<Vec<Value>, PluginFault> {
     ))
 }
 
-pub async fn instance(host: &HostClient, instance_id: &str) -> Result<Value, PluginFault> {
+pub async fn raw_instance(host: &HostClient, instance_id: &str) -> Result<Value, PluginFault> {
     let data = native(host, "GET", "/api/admin/plugins/instances".into(), None).await?;
     let x = data
         .as_array()
@@ -133,63 +157,90 @@ pub async fn instance(host: &HostClient, instance_id: &str) -> Result<Value, Plu
         .iter()
         .find(|x| x.get("id").and_then(Value::as_str) == Some(instance_id))
         .ok_or_else(|| fault("插件实例已不存在，请重新打开页面"))?;
+    Ok(x.clone())
+}
+
+pub async fn instance(host: &HostClient, instance_id: &str) -> Result<Value, PluginFault> {
+    let x = raw_instance(host, instance_id).await?;
     Ok(json!({
         "id":x["id"],"enabled":x["enabled"],"running":x["running"],
         "artifactSha256":x["artifactSha256"],"revision":x["revision"],
         "versionWarning":x["compatibilityWarning"],"loadError":x["loadError"],
-        "runtime":x["runtime"],"bindings":x["bindings"],
+        "runtime":x["runtime"],
     }))
 }
 
-fn list_allows(binding: &Value, field: &str, value: &str) -> bool {
-    binding
-        .get(field)
-        .and_then(Value::as_array)
-        .is_some_and(|list| list.is_empty() || list.iter().any(|item| item.as_str() == Some(value)))
-}
-
-/// 不替管理员扩大宿主绑定，拒绝那些保存成功却进不了中间件的规则
-pub fn validate_binding_scope(rules: &[Value], instance: &Value) -> Result<(), PluginFault> {
-    if rules.is_empty() {
-        return Ok(());
-    }
-    let bindings = instance["bindings"]
-        .as_array()
-        .ok_or_else(|| invalid("缺少入口绑定，请在插件管理中配置 attempt 绑定"))?;
-    for rule in rules {
-        let keys = rule["clientKeyIds"]
+pub async fn models(
+    host: &HostClient,
+    accounts: &[Value],
+    rules: &[Value],
+    options: &[String],
+) -> (Vec<String>, Vec<String>) {
+    let mut models: BTreeSet<String> = options.iter().cloned().collect();
+    for item in rules {
+        for model in item["models"]
             .as_array()
-            .ok_or_else(|| invalid("Key 范围无效"))?;
-        for model in rule["models"]
-            .as_array()
-            .ok_or_else(|| invalid("模型范围无效"))?
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
         {
-            let matches = |key: Option<&str>| {
-                bindings.iter().any(|b| {
-                    b["contribution"].as_str() == Some("donzy.ultrafast.middleware")
-                        && b["stage"].as_str() == Some("attempt")
-                        && list_allows(b, "providerIds", "openai")
-                        && list_allows(b, "models", model.as_str().unwrap_or_default())
-                        && match key {
-                            Some(key) => list_allows(b, "clientKeyIds", key),
-                            None => b["clientKeyIds"].as_array().is_some_and(Vec::is_empty),
-                        }
-                })
-            };
-            if keys.is_empty() {
-                if !matches(None) {
-                    return Err(invalid(
-                        "当前入口绑定限制了 Key，请明确选择入口允许的 Key，或由管理员调整绑定",
-                    ));
-                }
-            } else if keys.iter().any(|key| !matches(key.as_str())) {
-                return Err(invalid(
-                    "所选 Key 或模型不在入口绑定范围内，未保存，请先由管理员调整绑定",
-                ));
+            if crate::config::valid_model(model) {
+                models.insert(model.into());
             }
         }
     }
-    Ok(())
+    let candidates: Vec<_> = accounts
+        .iter()
+        .filter(|a| a["provider_id"] == "openai" && a["enabled"] == true)
+        .collect();
+    let mut warnings = Vec::new();
+    if candidates.len() > 16 {
+        warnings.push("候选列表只采样前 16 个启用账号，其他模型可手动输入".into());
+    }
+    for account in candidates.into_iter().take(16) {
+        let Some(id) = account["account_id"].as_str() else {
+            continue;
+        };
+        if !crate::config::valid_ids(&[id.into()]) {
+            continue;
+        }
+        let escaped: String = id
+            .bytes()
+            .map(|b| {
+                if b.is_ascii_alphanumeric() || b"-._~".contains(&b) {
+                    char::from(b).to_string()
+                } else {
+                    format!("%{b:02X}")
+                }
+            })
+            .collect();
+        let response = native_with_timeout(
+            host,
+            "GET",
+            format!("/api/admin/accounts/models?accountId={escaped}"),
+            None,
+            1_500,
+        )
+        .await;
+        match response {
+            Ok(value) => {
+                for model in value["models"].as_array().into_iter().flatten() {
+                    if let Some(id) = model["id"]
+                        .as_str()
+                        .filter(|m| crate::config::valid_model(m))
+                    {
+                        models.insert(id.into());
+                    }
+                }
+            }
+            Err(_) => {
+                if warnings.is_empty() {
+                    warnings.push("部分账号的模型候选读取失败，仍可手动输入模型 ID".into());
+                }
+            }
+        }
+    }
+    (models.into_iter().collect(), warnings)
 }
 
 fn input_error(e: PluginFault) -> (u16, Value) {
@@ -203,17 +254,22 @@ pub async fn handle(
     call: TypedCall<ManagementRequest>,
     instance_id: &str,
     fallback: &[Value],
+    model_options: &[String],
     store: &RuleStore,
 ) -> Result<(u16, Value), PluginFault> {
     match (call.request.method.as_str(), call.request.path.as_str()) {
         ("GET", "api/snapshot") => {
             let rules = store.snapshot(&call.host, fallback).await?;
+            let accounts = accounts(&call.host).await?;
+            let instance = instance(&call.host, instance_id).await?;
+            let (models, warnings) =
+                models(&call.host, &accounts, &rules.rules, model_options).await;
             Ok((
                 200,
                 json!({
                     "version":rules.version,"rules":rules.rules,"pluginVersion":env!("CARGO_PKG_VERSION"),
-                    "models":crate::config::SUPPORTED_MODELS,"keys":keys(&call.host).await?,
-                    "accounts":accounts(&call.host).await?,"instance":instance(&call.host,instance_id).await?,
+                    "models":models,"modelWarnings":warnings,"keys":keys(&call.host).await?,
+                    "accounts":accounts,"instance":instance,
                 }),
             ))
         }
@@ -231,10 +287,6 @@ pub async fn handle(
                 Err(e) => return Ok(input_error(e)),
             };
             if !rules.is_empty() {
-                let inst = instance(&call.host, instance_id).await?;
-                if let Err(e) = validate_binding_scope(&rules, &inst) {
-                    return Ok(input_error(e));
-                }
                 let key_facts = keys(&call.host).await?;
                 let account_facts = accounts(&call.host).await?;
                 for rule in &rules {

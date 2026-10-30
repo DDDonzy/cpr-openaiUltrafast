@@ -56,3 +56,11 @@ body[data-dialogue-viewport] [aria-modal="true"] { max-height: max(1px, calc(var
   body[data-dialogue-viewport] [aria-modal="true"] { max-height: max(1px, calc(var(--dialogue-visible-height, 100dvh) - 3rem)); }
 }
 
+
+.uf-model-picker { display: flex; flex-direction: column; gap: 8px; width: 100%; min-width: 0; }
+.uf-model-input { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.uf-model-input > :first-child { flex: 1; min-width: 0; }
+.uf-model-options { display: flex; flex-direction: column; gap: 10px; padding: 4px; overflow-wrap: anywhere; }
+
+.uf-model-field { border: 0; margin: 0; padding: 0; min-width: 0; }
+.uf-model-field legend { font-size: 14px; font-weight: 500; margin-bottom: 8px; }

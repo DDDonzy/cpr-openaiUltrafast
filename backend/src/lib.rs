@@ -92,10 +92,23 @@ pub fn plugin(configuration: serde_json::Value) -> Result<ComposedPlugin, Author
         .and_then(serde_json::Value::as_array)
         .cloned()
         .unwrap_or_default();
+    let model_options: Vec<String> = configuration
+        .get("modelOptions")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(serde_json::Value::as_str)
+        .filter(|m| config::valid_model(m))
+        .map(str::to_owned)
+        .collect();
     let middleware_fallback = fallback.clone();
     let store = Arc::new(state::RuleStore::default());
     let middleware_store = Arc::clone(&store);
     PluginBuilder::from_json(MANIFEST_BYTES)?
+        .on(
+            gateway_plugin_sdk::client::methods::STATE_MIGRATE,
+            |call| async move { Ok(TypedReply::new(state::migrate(call.request)?)) },
+        )?
         .middleware(move |call: RequestCall| {
             let middleware_fallback = middleware_fallback.clone();
             let store = Arc::clone(&middleware_store);
@@ -118,11 +131,6 @@ pub fn plugin(configuration: serde_json::Value) -> Result<ComposedPlugin, Author
                     && request.head.protocol == "openai"
                     && request.head.provider.as_deref() == Some("openai")
                     && request.head.operation == "generate"
-                    && request
-                        .head
-                        .model
-                        .as_deref()
-                        .is_some_and(|model| config::SUPPORTED_MODELS.contains(&model))
                 {
                     let config = store.configuration(&host, &middleware_fallback).await?;
                     if config.matches(&request.head)
@@ -143,9 +151,10 @@ pub fn plugin(configuration: serde_json::Value) -> Result<ComposedPlugin, Author
         .management(registration(), move |call: TypedCall<ManagementRequest>| {
             let fallback = fallback.clone();
             let store = Arc::clone(&store);
+            let model_options = model_options.clone();
             async move {
                 let instance_id = call.context.instance_id.clone();
-                match manage::handle(call, &instance_id, &fallback, &store).await {
+                match manage::handle(call, &instance_id, &fallback, &model_options, &store).await {
                     Ok((status, value)) => reply(status, value),
                     Err(e) => {
                         let status = match e.code {

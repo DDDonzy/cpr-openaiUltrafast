@@ -13,7 +13,7 @@ function isSnapshot(value: unknown): value is Snapshot {
   if (!isRuleSet(value)) return false
   const v = value as Snapshot
   return typeof v.pluginVersion === 'string' && Array.isArray(v.models) && Array.isArray(v.keys) && Array.isArray(v.accounts)
-    && !!v.instance && typeof v.instance.enabled === 'boolean' && typeof v.instance.running === 'boolean' && Array.isArray(v.instance.bindings)
+    && !!v.instance && typeof v.instance.enabled === 'boolean' && typeof v.instance.running === 'boolean'
 }
 
 /** Saved server state is authoritative; drafts belong to the editor, never this snapshot. */

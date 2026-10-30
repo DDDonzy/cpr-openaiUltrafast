@@ -9,7 +9,7 @@ assert binary[:6]==b'\x7fELF\x02\x01' and struct.unpack('<H',binary[18:20])[0]==
 assert manifest['contributes']['middleware']['version']==6
 resources={name:(R/name).read_bytes() for name in manifest.get('resources',{})}
 files={'bin/plugin':binary,**resources}
-manifest['package']={'protocolVersion':6,'target':{'os':'linux','architecture':'aarch64'},'files':{n:hashlib.sha256(d).hexdigest() for n,d in sorted(files.items())}}
+manifest['package']={'protocolVersion':7,'target':{'os':'linux','architecture':'aarch64'},'files':{n:hashlib.sha256(d).hexdigest() for n,d in sorted(files.items())}}
 contents={**files,'plugin.json':(json.dumps(manifest,ensure_ascii=False,indent=2)+'\n').encode()}
 name=f"donzy.ultrafast-{manifest['version']}-aarch64-unknown-linux-musl.tar.gz"
 (R/'dist').mkdir(exist_ok=True)

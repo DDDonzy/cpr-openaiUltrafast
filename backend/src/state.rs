@@ -2,7 +2,10 @@
 
 use gateway_plugin_sdk::{
     ErrorCode, PluginFault,
-    call::host::{StateGetRequest, StateGetResult, StatePutRequest, StatePutResult},
+    call::host::{
+        StateGetRequest, StateGetResult, StateMigrationChange, StateMigrationRequest,
+        StateMigrationResult, StatePutRequest, StatePutResult,
+    },
     client::HostClient,
 };
 use serde::{Deserialize, Serialize};
@@ -12,6 +15,7 @@ use tokio::sync::Mutex;
 
 pub const NAMESPACE: &str = "ultrafast-rules";
 pub const KEY: &str = "document";
+pub const SCHEMA_VERSION: u32 = 2;
 const CACHE_TTL: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Serialize)]
@@ -71,6 +75,26 @@ pub fn normalize(rules: Value) -> Result<Vec<Value>, PluginFault> {
         .clone())
 }
 
+/// 宿主负责排空、暂存与原子提交；插件只验证旧规则，不改写其值或版本。
+pub fn migrate(request: StateMigrationRequest) -> Result<StateMigrationResult, PluginFault> {
+    if request.namespace != NAMESPACE
+        || request.from_schema_version != 1
+        || request.to_schema_version != SCHEMA_VERSION
+    {
+        return Err(invalid("不支持的规则状态迁移"));
+    }
+    let mut changes = Vec::with_capacity(request.records.len());
+    for record in request.records {
+        if record.key != KEY {
+            return Err(invalid("未知规则状态键，迁移已取消"));
+        }
+        crate::config::Configuration::parse(record.value)
+            .map_err(|_| invalid("旧规则校验失败，迁移已取消"))?;
+        changes.push(StateMigrationChange::Keep { key: record.key });
+    }
+    Ok(StateMigrationResult { changes })
+}
+
 #[derive(Default)]
 pub struct RuleStore {
     cache: Mutex<Option<(Instant, crate::config::Configuration)>>,
@@ -97,7 +121,7 @@ impl RuleStore {
                 rules: normalize(json!(fallback))?,
             }),
             Some(record) => {
-                if record.schema_version != 1 {
+                if record.schema_version != SCHEMA_VERSION {
                     return Err(fault("规则状态版本不受支持"));
                 }
                 // Use the same strict contract as the middleware, including unknown fields

@@ -2,12 +2,12 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createRuleController } from '../frontend/src/controller.ts'
 const rule={name:'test',accountIds:[],clientKeyIds:['key_a'],models:['gpt-6-astra']}
-const snapshot=()=>({version:3,rules:[],pluginVersion:'0.2.3',keys:[{id:'key_a',name:'Key',enabled:true}],accounts:[],models:['gpt-6-astra','gpt-6.1-sol'],instance:{id:'test',enabled:true,running:true,revision:695,artifactSha256:'b'.repeat(64),versionWarning:null,loadError:null,bindings:[],runtime:{status:'running',drainingRevisions:[]}}})
+const snapshot=()=>({version:3,rules:[],pluginVersion:'0.3.2',keys:[{id:'key_a',name:'Key',enabled:true}],accounts:[],models:['gpt-6-astra','gpt-6.1-sol'],instance:{id:'test',enabled:true,running:true,revision:695,artifactSha256:'b'.repeat(64),versionWarning:null,loadError:null,runtime:{status:'running',drainingRevisions:[]}}})
 function deferred(){let resolve,reject;const promise=new Promise((r,j)=>{resolve=r;reject=j});return {promise,resolve,reject}}
 function fixture(save){const calls=[];const c=createRuleController(async(path,data)=>{calls.push({path,data});return path==='api/snapshot'?snapshot():save(data)});return {c,calls}}
 test('partial save result keeps catalogs, runtime and real package version',async()=>{
  const {c,calls}=fixture(()=>({rules:[rule],version:4}));await c.load();assert.equal(await c.save([rule]),true)
- assert.equal(c.snapshot.value.pluginVersion,'0.2.3');assert.equal(c.snapshot.value.instance.running,true)
+ assert.equal(c.snapshot.value.pluginVersion,'0.3.2');assert.equal(c.snapshot.value.instance.running,true)
  assert.equal(c.snapshot.value.keys[0].id,'key_a');assert.equal(c.snapshot.value.models.length,2);assert.equal(c.snapshot.value.version,4)
  assert.equal(calls[1].data.expectedVersion,3)
 })
@@ -45,5 +45,12 @@ test('deletion only changes the saved list after success',async()=>{
 })
 test('invalid snapshot contract is visible and does not replace existing catalog',async()=>{
  let first=true;const c=createRuleController(async()=>{if(first){first=false;return snapshot()}return {version:4,rules:[]}});await c.load();assert.equal(await c.load(),false)
- assert.equal(c.snapshot.value.pluginVersion,'0.2.3');assert.equal(c.ready.value,false)
+ assert.equal(c.snapshot.value.pluginVersion,'0.3.2');assert.equal(c.ready.value,false)
+})
+
+test('snapshot and rule saving work without a middleware configuration contract',async()=>{
+ const {c,calls}=fixture(()=>({rules:[rule],version:4}))
+ assert.equal(await c.load(),true);assert.equal('bindings' in c.snapshot.value.instance,false)
+ assert.equal(c.saveBindings,undefined);assert.equal(await c.save([rule]),true)
+ assert.deepEqual(calls.map(x=>x.path),['api/snapshot','api/rules'])
 })

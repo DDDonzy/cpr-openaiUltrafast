@@ -2,9 +2,10 @@
 import { computed, nextTick, onMounted, ref } from 'vue'
 import { ZButton, ZCard, ZCheckbox, ZDialog, ZEmpty, ZForm, ZFormItem, ZInput, ZScrollbar, ZTable, ZTag, type TableColumn } from '@codex-proxy/ui'
 import { Info, Plus, RefreshCw, Save } from '@lucide/vue'
+import ModelPicker from './ModelPicker.vue'
 import { api, type Rule } from './api'
 import { createRuleController } from './controller'
-import { copyRule, emptyRule, keyBlockedReason, middlewareBindings, ruleValidation, rulesWithDraft } from './rule-ui'
+import { copyRule, emptyRule, keyBlockedReason, ruleValidation, rulesWithDraft } from './rule-ui'
 import { useVisibleDialogViewport } from './dialog-viewport'
 
 const { snapshot, loading, saving, ready, locked, message, messageType, load, save } = createRuleController(api)
@@ -19,10 +20,8 @@ const accounts = computed(() => (snapshot.value?.accounts ?? []).filter(a => a.p
 const models = computed(() => snapshot.value?.models ?? [])
 const instance = computed(() => snapshot.value?.instance)
 const editable = computed(() => ready.value && !locked.value && !!instance.value?.enabled && !!instance.value?.running)
-const bindings = computed(() => middlewareBindings(instance.value?.bindings ?? []))
-const restrictedGroups = computed(() => bindings.value.some(b => b.accountGroupIds.length || b.identityBindings?.length))
 const draftDirty = computed(() => JSON.stringify(draft.value) !== baselineDraft.value)
-const keyReason = (key: typeof keys.value[number]) => keyBlockedReason(key, bindings.value, draft.value.models)
+const keyReason = (key: typeof keys.value[number]) => keyBlockedReason(key)
 const selectableKeys = computed(() => keys.value.filter(k => !keyReason(k)))
 const visibleKeys = computed(() => keys.value.filter(k => `${k.name} ${k.id}`.toLowerCase().includes(keySearch.value.trim().toLowerCase())))
 const visibleAccounts = computed(() => accounts.value.filter(a => `${a.name} ${a.email ?? ''}`.toLowerCase().includes(accountSearch.value.trim().toLowerCase())))
@@ -31,10 +30,8 @@ const keyName = (id: string) => keys.value.find(k => k.id === id)?.name ?? `${id
 const accountName = (id: string) => { const a = accounts.value.find(a => a.account_id === id); return a ? a.email || a.name : `${id}（已失效）` }
 const absentKeys = computed(() => draft.value.clientKeyIds.filter(id => !keys.value.some(k => k.id === id)))
 const absentAccounts = computed(() => draft.value.accountIds.filter(id => !accounts.value.some(a => a.account_id === id)))
-const validation = computed(() => ruleValidation(draft.value, bindings.value, keys.value) || (absentAccounts.value.length ? '部分账号已不存在，请移除后保存' : ''))
+const validation = computed(() => ruleValidation(draft.value, keys.value) || (absentAccounts.value.length ? '部分账号已不存在，请移除后保存' : ''))
 const canSave = computed(() => editable.value && !validation.value && (editIndex.value >= 0 || rules.value.length < 64))
-const bindingKeyNames = computed(() => [...new Set(bindings.value.flatMap(b => b.clientKeyIds))].map(keyName))
-const bindingUnrestricted = computed(() => bindings.value.some(b => !b.clientKeyIds.length))
 const statusError = computed(() => instance.value?.loadError || instance.value?.versionWarning || (snapshot.value && !instance.value?.running ? '插件未运行，请检查运行详情' : ''))
 type RuleRow = Rule & { index: number }
 const rows = computed<RuleRow[]>(() => rules.value.map((r, index) => ({ ...r, index })))
@@ -114,6 +111,7 @@ onMounted(async () => { if (await load()) resetDraft() })
     <p v-if="statusError" class="uf-error" role="alert">{{ statusError }}</p>
     <p v-if="message && !deleteOpen" class="uf-feedback" :class="messageType" :role="messageType === 'danger' ? 'alert' : 'status'">{{ message }}</p>
 
+    <p v-for="warning in snapshot?.modelWarnings ?? []" :key="warning" class="uf-footnote">{{ warning }}</p>
     <div class="uf-board">
       <ZCard title="客户端 Key" padding="compact" class="uf-target-card">
         <template #description>已选 {{ draft.clientKeyIds.length }} / 可选 {{ selectableKeys.length }}</template>
@@ -131,10 +129,7 @@ onMounted(async () => { if (await load()) resetDraft() })
             </div>
           </ZScrollbar>
           <div v-if="absentKeys.length" class="uf-actions"><ZTag v-for="id in absentKeys" :key="id" type="warning" closable :disabled="!editable" @close="toggle('clientKeyIds', id, false)">{{ keyName(id) }}</ZTag></div>
-          <div class="uf-card-note">
-            <span class="uf-footnote">{{ bindingUnrestricted ? '入口未限制 Key，按所选范围匹配' : `宿主入口限制了 Key，可选 ${selectableKeys.length} / ${keys.length}` }}</span>
-            <ZButton size="small" variant="text" :disabled="!snapshot" @click="detailsOpen = true">查看原因</ZButton>
-          </div>
+          <p class="uf-footnote uf-push-bottom">只需在规则里选择 Key，不改变 Key 原有权限与分组</p>
         </div>
       </ZCard>
 
@@ -164,11 +159,9 @@ onMounted(async () => { if (await load()) resetDraft() })
           <ZFormItem label="规则名称" required>
             <ZInput ref="nameInput" v-model="draft.name" :disabled="!editable" class="uf-field" placeholder="例如：指定 Key 的加速请求" />
           </ZFormItem>
-          <ZFormItem label="模型" required>
-            <div class="uf-model-list">
-              <ZCheckbox v-for="model in models" :key="model" :label="model" :disabled="!editable" :model-value="draft.models.includes(model)" @update:model-value="checked => toggle('models', model, checked)" />
-            </div>
-          </ZFormItem>
+          <fieldset class="uf-model-field"><legend>模型 *</legend>
+            <ModelPicker v-model="draft.models" :options="models" :disabled="!editable" />
+          </fieldset>
           <div class="uf-tier"><span class="uf-secondary">强制档位</span><ZTag type="primary" size="small">ultrafast</ZTag></div>
           <p class="uf-footnote">匹配 Key、账号和模型后覆盖客户端档位，不改变路由或上游返回结果</p>
           <div class="uf-save-area">
@@ -194,16 +187,14 @@ onMounted(async () => { if (await load()) resetDraft() })
       </ZTable>
     </ZCard>
 
-    <ZDialog v-model="detailsOpen" title="运行详情与入口范围" width="640px" :draggable="false">
+    <ZDialog v-model="detailsOpen" title="运行详情" width="640px" :draggable="false">
       <dl class="uf-details">
         <div><dt>插件版本</dt><dd>{{ snapshot?.pluginVersion ?? '—' }}</dd></div>
         <div><dt>运行状态</dt><dd>{{ instance?.running ? '运行中' : '未运行' }}</dd></div>
         <div><dt>实例修订 / 规则版本</dt><dd>{{ instance?.revision ?? '—' }} / {{ snapshot?.version ?? '未初始化' }}</dd></div>
-        <div><dt>允许的 Key</dt><dd>{{ bindingUnrestricted ? '全部 Key' : bindingKeyNames.join('、') || '未配置入口' }}</dd></div>
       </dl>
-      <p class="uf-detail-note">Key 的可选范围来自 CPR 的中间件绑定，不是插件只支持某个用户，也不代表其他 Key 没有上游权益</p>
-      <p class="uf-detail-note">要允许其他 Key，需要管理员先调整插件管理中的入口绑定，页面不会自动扩大范围</p>
-      <p v-if="restrictedGroups" class="uf-detail-note">当前入口还有分组或身份限制，实际范围继续取交集</p>
+      <p class="uf-detail-note">按已保存规则中的 Key、账号和模型决定是否强制 Ultrafast，无需另外配置请求入口。</p>
+      <p class="uf-detail-note">不修改账号路由、分组或 Key 权限；选择模型不代表上游支持该加速档位。</p>
       <p v-if="instance?.runtime?.drainingRevisions.length" class="uf-detail-note">旧修订 {{ instance.runtime.drainingRevisions.join('、') }} 等待引用释放，新修订 {{ instance.revision }} 已运行</p>
       <p v-if="statusError" class="uf-error">{{ statusError }}</p>
       <p class="uf-footnote">空规则只是取消插件强制，不拦截客户端自己指定 ultrafast</p>

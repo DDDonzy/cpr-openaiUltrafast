@@ -1,9 +1,15 @@
-//! 解析规则并限定账号、Key 与支持 Ultrafast 的模型交集
+//! 解析规则并限定账号、Key 与用户选择的模型交集
 
 use gateway_plugin_sdk::call::middleware::{MiddlewareMount, MiddlewareRequestHead};
 use serde::{Deserialize, Serialize};
 
-pub const SUPPORTED_MODELS: [&str; 2] = ["gpt-6-astra", "gpt-6.1-sol"];
+pub const MAX_MODELS: usize = 256;
+
+pub fn valid_model(model: &str) -> bool {
+    !model.is_empty()
+        && model.chars().count() <= 128
+        && !model.chars().any(|c| c.is_control() || c.is_whitespace())
+}
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -24,7 +30,7 @@ pub struct Rule {
 
 #[derive(Debug, thiserror::Error)]
 #[error(
-    "Ultrafast configuration requires bounded rules with an account or Key scope and supported models"
+    "Ultrafast configuration requires bounded rules with an account or Key scope and valid model IDs"
 )]
 pub struct ConfigurationError;
 
@@ -55,11 +61,8 @@ impl Rule {
             && valid_ids(&self.account_ids)
             && valid_ids(&self.client_key_ids)
             && !self.models.is_empty()
-            && self.models.len() <= SUPPORTED_MODELS.len()
-            && self
-                .models
-                .iter()
-                .all(|model| SUPPORTED_MODELS.contains(&model.as_str()))
+            && self.models.len() <= MAX_MODELS
+            && self.models.iter().all(|model| valid_model(model))
             && self
                 .models
                 .iter()
@@ -80,7 +83,7 @@ impl Rule {
     }
 }
 
-fn valid_ids(ids: &[String]) -> bool {
+pub fn valid_ids(ids: &[String]) -> bool {
     ids.len() <= 128
         && ids.iter().enumerate().all(|(i, id)| !ids[..i].contains(id))
         && ids.iter().all(|id| {

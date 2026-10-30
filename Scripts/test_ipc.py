@@ -10,7 +10,7 @@ class Harness:
   self.p=subprocess.Popen([str(BIN)],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0)
   self.q=queue.Queue();self.seq=99;self.calls=[]
   threading.Thread(target=self.reader,daemon=True).start()
-  self.send({'type':'hello','handshake':{'protocol_version':6,'artifact_sha256':'a'*64,'plugin_id':'donzy.ultrafast','instance_id':'test','generation':1,'incarnation':'inc','configuration':CONFIG if config is None else config,'contributes':MANIFEST['contributes']}})
+  self.send({'type':'hello','handshake':{'protocol_version':7,'artifact_sha256':'a'*64,'plugin_id':'donzy.ultrafast','instance_id':'test','generation':1,'incarnation':'inc','configuration':CONFIG if config is None else config,'contributes':MANIFEST['contributes']}})
   ready,b=self.read();assert ready['type']=='ready' and not b
   self.start('plugin.register',{},b'','registration');reply,b=self.read();assert reply['type']=='result' and reply['result']['contributes']==MANIFEST['contributes']
  def reader(self):
@@ -36,9 +36,13 @@ class Harness:
   if data:m['data_bytes']=len(data)
   meta=json.dumps(m,separators=(',',':')).encode();self.p.stdin.write(struct.pack('>IQ',len(meta),len(data)+len(b))+meta+data+b);self.p.stdin.flush()
  def read(self):
-  v=self.q.get(timeout=8)
-  if isinstance(v,Exception):raise AssertionError('plugin exited: '+self.p.stderr.read().decode(errors='replace'))
-  return v
+  while True:
+   v=self.q.get(timeout=8)
+   if isinstance(v,Exception):raise AssertionError('plugin exited: '+self.p.stderr.read().decode(errors='replace'))
+   meta,_=v
+   if meta['type'] in ('suspend','callback_consumed'):continue
+   if meta['type']=='resume':self.send({'type':'resumed','id':meta['id'],'epoch':meta['epoch']});continue
+   return v
  def start(self,method,params,body,stage='attempt'):
   self.seq+=2;i=self.seq
   context={'call_id':i,'instance_id':'test','generation':1,'incarnation':'inc','stage':stage,'timeout_ms':3000 if stage=='registration' else 30000,'resource_stream':False,'resource_scope_id':'scope'+str(i)}
@@ -57,7 +61,7 @@ class Harness:
   if callback['type']=='error':return None,None,callback
   if callback['type']=='callback' and callback['method']=='host.state.get':
    assert callback['params']=={'namespace':'ultrafast-rules','key':'document'},callback
-   self.send({'type':'result','id':callback['id'],'result':{'record':{'value':{'rules':self.rules},'version':1,'schema_version':1}}})
+   self.send({'type':'result','id':callback['id'],'result':{'record':{'value':{'rules':self.rules},'version':1,'schema_version':2}}})
    callback,payload=self.read()
    if callback['type']=='error':return None,None,callback
   assert callback['type']=='callback' and callback['method']=='host.middleware.next',callback
@@ -87,6 +91,22 @@ class ProcessTests(unittest.TestCase):
      self.assertEqual(result['result']['response'],'original-response');self.assertFalse(result['result'].get('header_mutations'))
    self.assertEqual(len(h.calls),6)
 
+ def test_schema_migration_preserves_old_rules_and_rejects_unknown_versions(self):
+  with Harness() as h:
+   request={'namespace':'ultrafast-rules','from_schema_version':1,'to_schema_version':2,'records':[{'key':'document','value':CONFIG,'version':10}]}
+   i=h.start('plugin.state.migrate',{},json.dumps(request).encode(),stage='configuration')
+   result,b=h.read();self.assertEqual(result['id'],i);self.assertEqual(result['type'],'result',result);self.assertEqual(json.loads(b),{'changes':[{'action':'keep','key':'document'}]})
+   request['from_schema_version']=9
+   h.start('plugin.state.migrate',{},json.dumps(request).encode(),stage='configuration')
+   result,_=h.read();self.assertEqual(result['type'],'error');self.assertEqual(result['error']['code'],'invalid_input')
+ def test_custom_model_rewrites_on_every_transport_only_when_selected(self):
+  for transport in ['http_json','http_sse','web_socket']:
+   config={'rules':[dict(CONFIG['rules'][0],models=['custom/my-future-model'])]}
+   with self.subTest(transport=transport),Harness(config) as h:
+    p,b,_=h.exercise(b'{"input":[]}',h.head(model='custom/my-future-model',transport=transport))
+    self.assertEqual(p['body'],'replace');self.assertEqual(json.loads(b)['service_tier'],'ultrafast')
+    p,_,_=h.exercise(b'no parsing',h.head(model='unselected-model',transport=transport))
+    self.assertEqual(p['body'],'preserve')
  def test_unmatched_requests_preserve_invalid_or_arbitrary_bytes(self):
   with Harness() as h:
    for kw in [dict(client_key_id='other'),dict(account_id='other'),dict(model='gpt-6-luna'),dict(operation='compact'),dict(provider='xai')]:
@@ -110,7 +130,7 @@ class ProcessTests(unittest.TestCase):
   with Harness() as h:
    i=h.start('middleware.handle',h.head(),b'{"input":[]}');callback,_=h.read()
    if callback['method']=='host.state.get':
-    h.send({'type':'result','id':callback['id'],'result':{'record':{'value':{'rules':h.rules},'version':1,'schema_version':1}}});callback,_=h.read()
+    h.send({'type':'result','id':callback['id'],'result':{'record':{'value':{'rules':h.rules},'version':1,'schema_version':2}}});callback,_=h.read()
    self.assertEqual(callback['method'],'host.middleware.next')
    h.send({'type':'cancel','id':i});events=[]
    for _ in range(5):

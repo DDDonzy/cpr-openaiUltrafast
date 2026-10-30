@@ -27,20 +27,16 @@ export async function api<T>(path: string, data?: unknown): Promise<T> {
 export interface Rule { name: string; accountIds: string[]; clientKeyIds: string[]; models: string[] }
 export interface KeyFact { id: string; name: string; enabled: boolean }
 export interface AccountFact { account_id: string; name: string; email: string | null; provider_id: string; enabled: boolean }
-export interface Binding {
-  contribution: string; stage: string; clientKeyIds: string[]; accountGroupIds: string[]
-  providerIds: string[]; models: string[]; identityBindings?: unknown[]
-}
 export interface RuleSet { version: number | null; rules: Rule[] }
 export interface Snapshot extends RuleSet {
   pluginVersion: string
   models: string[]
+  modelWarnings?: string[]
   keys: KeyFact[]
   accounts: AccountFact[]
   instance: {
     id: string; enabled: boolean; running: boolean; revision: number
     artifactSha256: string; versionWarning: string | null; loadError: string | null
-    bindings: Binding[]
     runtime: { status: string; drainingRevisions: number[] } | null
   }
 }

@@ -1,31 +1,16 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { middlewareBindings, anyKeyAllowed, keyBlockedReason, emptyRule, copyRule, rulesWithDraft, ruleValidation } from '../frontend/src/rule-ui.ts'
+import { keyBlockedReason, emptyRule, copyRule, rulesWithDraft, ruleValidation } from '../frontend/src/rule-ui.ts'
 const key=(id,enabled=true)=>({id,name:`Name ${id}`,enabled})
-const binding=(clientKeyIds=['key_a'],models=['gpt-6-astra','gpt-6.1-sol'])=>({contribution:'donzy.ultrafast.middleware',stage:'attempt',providerIds:['openai'],models,clientKeyIds,accountGroupIds:[],identityBindings:[]})
 const rule=()=>({name:'Demo',clientKeyIds:['key_a'],accountIds:[],models:['gpt-6-astra']})
-test('scope comes from bindings, not Donzy name or a hard-coded key',()=>{
- assert.equal(keyBlockedReason(key('key_b'),[binding(['key_b'])],['gpt-6-astra']),'')
- assert.equal(keyBlockedReason(key('key_a'),[binding(['key_b'])],['gpt-6-astra']),'入口未绑定')
+test('all enabled keys are selectable without a second middleware scope',()=>{
+ assert.equal(keyBlockedReason(key('key_a')),'')
+ assert.equal(keyBlockedReason(key('another-key')),'')
+ assert.equal(keyBlockedReason(key('disabled',false)),'Key 已停用')
 })
-test('unrestricted key binding admits arbitrary keys, but does not create rules',()=>{
- assert.equal(anyKeyAllowed([binding([])],['gpt-6-astra']),true)
- assert.equal(keyBlockedReason(key('another'),[binding([])],['gpt-6-astra']),'')
- assert.deepEqual(emptyRule(['gpt-6-astra']).clientKeyIds,[])
-})
-test('a key must have an entry for every selected model',()=>{
- assert.equal(keyBlockedReason(key('key_a'),[binding(['key_a'],['gpt-6-astra'])],['gpt-6-astra','gpt-6.1-sol']),'所选模型未绑定')
- assert.equal(keyBlockedReason(key('key_a'),[binding(['key_a'],['gpt-6-astra']),binding(['key_a'],['gpt-6.1-sol'])],['gpt-6-astra','gpt-6.1-sol']),'')
-})
-test('account-only drafts require unrestricted key coverage for all selected models',()=>{
+test('account-only drafts do not require a separate key binding',()=>{
  const r={...rule(),clientKeyIds:[],accountIds:['acct_a']}
- assert.notEqual(ruleValidation(r,[binding()],[key('key_a')]),'')
- assert.equal(ruleValidation(r,[binding([])],[key('key_a')]),'')
- assert.equal(anyKeyAllowed([binding([],['gpt-6-astra'])],['gpt-6-astra','gpt-6.1-sol']),false)
-})
-test('other providers, stages and contributions cannot unlock the key selector',()=>{
- assert.deepEqual(middlewareBindings([{...binding([]),stage:'request'},{...binding([]),providerIds:['xai']},{...binding([]),contribution:'other'}]),[])
- assert.equal(middlewareBindings([{...binding([]),providerIds:[]}]).length,1)
+ assert.equal(ruleValidation(r,[]),'')
 })
 test('draft and saved list do not share mutable arrays',()=>{
  const r=rule(),d=copyRule(r);d.models.push('gpt-6.1-sol');d.clientKeyIds.push('key_b')
@@ -43,8 +28,19 @@ test('stale editor index is rejected rather than silently replacing a different 
 })
 test('empty scope, names, models and disabled keys cannot be saved',()=>{
  const cases=[{...rule(),name:''},{...rule(),name:'x'.repeat(129)},{...rule(),name:'bad\n'},{...rule(),models:[]},{...rule(),clientKeyIds:[]}]
- for(const r of cases)assert.notEqual(ruleValidation(r,[binding()],[key('key_a')]),'')
- assert.notEqual(ruleValidation(rule(),[binding()],[key('key_a',false)]),'')
- assert.notEqual(ruleValidation(rule(),[binding()],[]),'')
- assert.equal(ruleValidation(rule(),[binding()],[key('key_a')]),'')
+ for(const r of cases)assert.notEqual(ruleValidation(r,[key('key_a')]),'')
+ assert.notEqual(ruleValidation(rule(),[key('key_a',false)]),'')
+ assert.notEqual(ruleValidation(rule(),[]),'')
+ assert.equal(ruleValidation(rule(),[key('key_a')]),'')
+})
+test('new drafts never implicitly select an entire dynamic catalog',()=>{
+ assert.deepEqual(emptyRule(['gpt-6-luna','future-model']).models,[])
+ assert.deepEqual(emptyRule().clientKeyIds,[])
+})
+test('custom model IDs and another key require only a valid rule',()=>{
+ const r={...rule(),clientKeyIds:['key_b'],models:['custom/model:latest','gpt-6-luna','third-model']}
+ assert.equal(ruleValidation(r,[key('key_b')]),'')
+ for(const models of [['bad model'],['x'.repeat(129)],['same','same'],Array.from({length:257},(_,i)=>`m${i}`)]){
+  assert.notEqual(ruleValidation({...r,models},[key('key_b')]),'')
+ }
 })

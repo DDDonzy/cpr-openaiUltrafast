@@ -61,7 +61,7 @@ Provider 固定为宿主内置的 OpenAI 与 xAI。宿主开放以下 11 类扩�
 | `middleware` | `PluginBuilder::middleware` / `middleware.handle` |
 | `upstream_adapter` | `methods::UPSTREAM_ADAPTER_REGISTER`、`methods::UPSTREAM_ADAPTER_EXECUTE`，见[受管上游](upstream-adapters.md) |
 | `model_router` | `methods::ROUTE_MODEL` |
-| `model_catalog` | `PluginBuilder::model_catalog` / `methods::MODEL_CATALOG_REGISTER` |
+| `model_catalog` | `PluginBuilder::model_catalog` / `methods::MODEL_CATALOG_REGISTER_V2` |
 | `retry_policy` | `methods::RETRY_DECISION` |
 | `scheduler` | `methods::SCHEDULE_ACCOUNT` |
 | `observer` | `methods::OBSERVE` / `observer.observe`，按事件类型订阅 |
@@ -81,11 +81,14 @@ Provider 固定为宿主内置的 OpenAI 与 xAI。宿主开放以下 11 类扩�
 | SDK 方法 | 回调 | 查询与结果 |
 | --- | --- | --- |
 | `call.host.account_facts(query)` | `host.data.accounts.list` | `AccountFactsQuery`：可选 `provider_id`、`cursor`，必填 `limit`（1～200）；按账号 ID 升序，`next_cursor=null` 表示本页已结束 |
+| `call.host.quota_details(query)` | `host.data.quota.details` | `QuotaFactsQuery { account_id }`：读取完整额度事实，包含窗口归属、触顶和点数 |
+| `call.host.check_access(query)` | `host.data.access.check` | `AccessQuery { client_key_id, account_ids, upstream_model }`：读取 Key 对指定账号及可选上游模型的冻结授权 |
+| `call.host.verify_client(request)` | `host.client.verify` | `VerifyClientRequest { authorization }`：复用入口认证，返回 `VerifiedClient { client_key_id }` |
 | `call.host.quota_facts(query)` | `host.data.quota.get` | `QuotaFactsQuery { account_id }`：读取 Provider 现有观测，不访问上游刷新 |
 | `call.host.key_facts(query)` | `host.data.keys.get` | `ClientKeyFactsQuery { client_key_id }`：读取当前 Key 的启用状态及显式分组 ID，不返回密钥 |
 
-类型在 `call::data`。控制参数为 `{}`，查询和结果使用二进制 JSON；结果固定 `schema_version=1`。
-SDK 解析响应时忽略未知字段，包含账号分页、账号及额度窗口；已知字段按声明校验类型与必填性，查询拒绝未知字段。
+类型在 `call::data`。控制参数为 `{}`，查询和结果使用二进制 JSON；事实结果固定 `schema_version=1`，认证结果只包含 `client_key_id`。
+SDK 解析响应时忽略未知字段，包含账号分页、账号及额度窗口；已知字段按声明校验类型与必填性，账号、Key 与额度查询拒绝未知字段，认证与权限查询忽略未知字段。
 插件须通过 `engines.codex-proxy-rs` 限定支持所用接口和字段的宿主版本
 
 `key_facts` 每次读取当前管理数据，返回 `client_key_id`、`enabled`、`group_ids`；不存在的 Key 沿用事实接口的 `rejected` 错误
@@ -93,9 +96,21 @@ SDK 解析响应时忽略未知字段，包含账号分页、账号及额度窗�
 `group_ids` 表示显式绑定，包含停用分组，不是最终可路由账号集合；空绑定也不代表单账号范围。通过 `account_facts` 关联账号时需完整遍历分页，结果包含停用账号。跨查询关联及同步策略由插件负责，这些调用不构成跨查询事务，管理员修改绑定后应重新检查。
 账号仅返回 `account_id`、`provider_id`、`name`、`email`、`group_ids`、`enabled` 和 `updated_at_ms`，不附带令牌或代理信息。
 `name` 和 `email` 来自宿主已保存的账号资料；没有邮箱时 `email=null`，读取不会请求上游个人信息。
-额度仅返回观测时间与窗口的 `key`、`window_seconds`、`used_percent`、`reset_at_ms`。
+`quota_facts` 仅返回观测时间与窗口的 `key`、`window_seconds`、`used_percent`、`reset_at_ms`。
 时间均为 UTC Unix 毫秒，比例为百分数；未知值保留 `null`，不能解释为 0。`observed_at_ms=null` 表示没有可用观测时间，
 不保证当前缓存新鲜，不提供历史快照或多个查询之间的原子一致性
+
+`quota_details` 保留 Provider 已解释的 `limit_reached`、窗口 `group`、`label`、`limit_id`、`limit_name`、`role`
+及点数 `has_credits`、`unlimited`、`balance`；缺失值仍为 `null`，不返回上游原始文档，不发起刷新
+
+`verify_client` 使用当前请求设置和原认证计划，包含外部 principal 到 Key 的映射；没有 HTTP 入口时使用当前发布配置。
+认证可以调用认证插件，继续扣减父预算并响应取消；验证成功不做推理准入、账号租约、使用记录或计费。
+授权原文只作本次认证输入，不进入返回值
+
+`check_access` 与 `host.models.list`、显式 Key 模型执行共用父调用内的身份和冻结权限快照。
+账号或模型不在冻结范围内时返回 `allowed=false`，不存在或不可用的 Key 沿用 Core 的身份拒绝。
+它们不建立模型执行图，不受模型递归深度或当前实例已入链影响；健康、冷却、额度、租约与实时可用性由实际执行检查。
+`upstream_model` 使用上游模型名，省略时只判断账号范围；返回结果不承诺后续请求一定可以执行
 
 ```rust,ignore
 use gateway_plugin_sdk::call::data::{AccountFactsQuery, QuotaFactsQuery};
@@ -217,8 +232,8 @@ SDK 不自动重试。超时或断连不能证明写入未提交；重试上限�
 原有 8 MiB 编码上限、Runtime 缓冲预算及流控窗口限制
 
 HTTP 和 request 中间件中的模型回调沿用有效请求设置；attempt、outbound、路由、调度、重试和上游适配器
-沿用该次模型请求冻结的正文预算。显式 Key 模型调用的预检与执行使用同一绑定快照，
-同一父调用内复用 Key 时不受后续配置发布影响；父调用结束后重新绑定才读取新配置，无需重新启用插件
+沿用该次模型请求冻结的正文预算。显式 Key 模型调用的预检与执行使用同一身份快照，
+同一父调用内复用 Key 时不受后续配置发布影响；父调用结束后重新解析身份才读取新配置，无需重新启用插件
 
 `ModelExecuteRequest.client_key_id` 可显式选择执行 Key，不与触发插件的父请求 Key 求交。省略时继承现有模型父请求身份；没有模型父请求的调用必须提供 Key。所选 Key 的启用状态、模型规则、账号组、并发和预算继续由 Core 执行
 嵌套调用与显式 Key 调用继承入口快照中的客户端 IP 和 User-Agent；没有 HTTP 入口的后台调用保持来源未知
@@ -238,12 +253,17 @@ HTTP 和 request 中间件中的模型回调沿用有效请求设置；attempt�
 父调用取消或结束时宿主回收未关闭的流，SDK 不后台预读。取消一次 `read()` 等待后，再次读取会继续同一次操作，不丢弃已经返回的分块。
 账号上游使用同一正文对象，使用方式见[受管上游](upstream-adapters.md)
 
+`HostClient::account_http(AccountHttpRequest { account_id, credential_revision, request }, body)` 使用指定账号的当前代理配置，
+经 `host.http.account` 返回同一 `HostHttpBody`。每次发送核对账号存在、启用和凭据版本，版本变化须由插件重新读取后决定下一步。
+请求 headers 与正文完全由插件提供；宿主不注入账号认证、不申请推理租约，代理不可用时直接失败，不回退直连。
+这项能力与上游适配器的账号推理 HTTP 分开，适用于插件自行构造的账号网络请求
+
 请求和响应 `headers` 使用 `(String, Vec<u8>)`，保留重复头与非 UTF-8 值；响应另有 `http_version`。
 读取至 EOF 后通过 `body.trailers()` 取得完整尾部头，读取中只包含已收到的部分。
 `collect` 只返回正文，需要尾部头时使用 `read`；底层非流式回复携带 `trailers`，流式回复在 `stream_read` 中交付尾部头
 
 `host.http.do/do_stream` 和流读取／关闭方法提供受管 HTTP。正文使用独立二进制载荷，Host 统一执行代理、超时和背压，不按插件身份限制目标地址段。DNS 由宿主解析，连接保留目标 Host 与 TLS 域名校验；重定向不会自动跟随。
-受管 HTTP（包括 `host.upstream.http.do[_stream]`）的请求正文按有效设置
+受管 HTTP（包括 `host.http.account` 和 `host.upstream.http.do[_stream]`）的请求正文按有效设置
 `responses_max_decompressed_body_bytes` 检查。HTTP/request 中间件使用有效请求设置；
 attempt、outbound、路由、调度、重试和上游适配器使用执行冻结预算，其余调用读取当前发布配置。
 超限返回带 HTTP 413 的 `invalid_input` 和 `not_sent`，不向目标发送请求。
@@ -275,7 +295,7 @@ attempt、outbound、路由、调度、重试和上游适配器使用执行冻�
 `next.run(input)` 消费自身，最多执行一次；结果按相反顺序经过外层。重试或独立子请求通过宿主执行服务发起
 
 调用上下文的 `timeout_ms` 限制插件自身处理时间，入站与返回处理合计使用同一预算。
-等待 `next` 时暂停该预算并释放执行名额；恢复后继续同一次调用，普通宿主回调不会暂停计时。
+父处理任务真正挂起时释放执行名额，恢复取得授权后继续同一次调用。仅等待 `next` 时暂停处理预算；并行包含普通回调时继续计时，具体规则见[并发与期限](../README.md#并发与期限)。
 排队、在途容量与过载行为见 [SDK 并发与期限](../README.md#并发与期限)。
 请求总期限、下游操作超时和取消信号独立生效，客户端取消或插件退出会结束等待并回收资源
 
@@ -323,6 +343,10 @@ let status = host.service::<SetResetCreditAutomation>((account_id, true)).await?
 调用发生在路由匹配之前，管理接口、模型接口和未知路径都可参与。`settings` 是同一请求快照中的宿主运行设置，
 插件改写后用于后续认证、版本检查、正文解压及执行；不新增设置业务的中间件入口。`timeout_ms` 使用宿主 HTTP 超时基线，
 插件可改写或用 `None` 清除；终端按有效值执行，不恢复宿主默认值。宿主快照不可用时 `settings` 为 `null`
+
+`POST /v1/chat/completions` 在 HTTP 挂载中保留 Chat 请求与 Chat JSON/SSE 响应视图，
+转换为 Responses 发生在内层模型入口。自行按 URI 筛选、改写或分派模型请求的 HTTP 插件，
+需要将该路径包含在自身匹配范围内；只匹配 `/v1/responses` 不会覆盖 Chat
 
 `HttpCall.settings_sources` 返回 `config_revision`、宿主 `host` 基线、运行设置的 `overrides`、Key 作用域的 `execution` 与 `http_timeout`。
 每条改写记录含 `instance_id`、`order` 和 `value`；来源由宿主记录，修改查询结果不会写入设置。
@@ -448,6 +472,13 @@ Responses 终端重新解码插件正文时读取改写后的正文上限；atte
 更早的改写使用上述 HTTP 请求的 `settings`。`request.head.settings_sources` 使用相同的来源结构，`execution.input` 表示进入当前 Key 作用域时的有效值。
 原生 Responses WebSocket 每轮请求读取当前宿主快照，重新认证并解析 Key 策略，同时保留握手阶段的显式改写；已开始的执行保持自己的冻结值
 
+Chat Completions 在 request 与 attempt 挂载中使用规范化的 Responses 请求和响应正文，
+`request.head.endpoint` 仍为 `/v1/chat/completions`，`protocol` 仍为 `openai`。
+request 改写按 Responses 合同重新解码，响应先经过该合同的复核，再由 API 投影成 Chat 交给外层 HTTP 挂载。
+Chat 的下游流模式及 `include_usage` 由 API 持有，request 阶段不能切换已确定的下游流模式。
+同一边界的原样保留不要求 Chat 与 Responses 字节相同；需要读写 `messages` 或 `choices` 的插件应使用 HTTP 挂载，
+字段范围见 [Chat 合同](../../../../../docs/api.md#chat-completions-请求)
+
 中间件可读取和改写完整请求、响应 headers、正文与响应帧，也不按字段名称过滤认证、Cookie、会话或连接头。
 该能力遵循[完整信任](manifest.md#完整信任)边界；类型、HTTP 格式、大小及资源生命周期仍需符合合同
 
@@ -510,23 +541,44 @@ restore_and_validate_response(response).await
 
 ### 模型目录
 
-`model_catalog` v1 在 registration 阶段一次提交 `ModelCatalogRegistration { models: Vec<ModelAlias> }`，不需要请求级 binding。
-每条 `ModelAlias { id, provider, model }` 定义公开 ID、Provider 及直接上游目标，条目正确性由插件负责。
-每实例最多 256 条，整个二进制 JSON 最多 64 KiB；条目重复、目标不存在或 Provider 未注册不阻止宿主快照发布。
+`model_catalog` 仅支持 v2，在 registration 阶段通过 `model_catalog.register` 一次提交
+`ModelCatalogRegistrationV2 { aliases, models }`，不接受请求级 binding。
+返回值必须同时包含 `aliases` 和 `models`，没有对应条目时使用空数组。
+`aliases` 的每条 `ModelAlias { id, provider, model }` 定义公开 ID、Provider 及直接上游目标，条目正确性由插件负责。
+别名条目重复、目标不存在或 Provider 未注册不阻止宿主快照发布。
 请求按发布顺序取首个匹配条目，插件别名优先于静态映射，目标直接用于上游选路，不递归展开别名或目标上的静态映射
 
 ```rust,ignore
-use gateway_plugin_sdk::call::catalog::{ModelAlias, ModelCatalogRegistration};
+use gateway_plugin_sdk::call::catalog::{ModelAlias, ModelCatalogRegistrationV2};
 let plugin = PluginBuilder::from_json(include_bytes!("../plugin.json"))?
-    .model_catalog(ModelCatalogRegistration { models: vec![ModelAlias {
-        id: "team-default".into(), provider: "openai".into(), model: "gpt-target".into(),
-    }] })?
+    .model_catalog(ModelCatalogRegistrationV2 {
+        aliases: vec![ModelAlias {
+            id: "team-default".into(), provider: "openai".into(), model: "gpt-target".into(),
+        }],
+        models: vec![],
+    })?
     .build()?;
 ```
 
 有效目录、路由和目标能力随同一个不可变快照发布，`/v1/models`、详情、原生目录和 `host.models.list` 共用该事实及现有 Key／账号模型范围。
 目标存在时，别名复用目标的可公开对象；禁用后新请求不再使用该别名，在途请求持有旧代次。
-v1 是直接别名，动态选择可组合 `model_router`；实际路由仍须通过宿主的权限和能力校验，不提供多目标虚拟模型注册合同
+别名仅表达直接映射，动态选择可组合 `model_router`；实际路由仍须通过宿主的权限和能力校验，不提供多目标虚拟模型注册合同
+
+`models` 的每条 `AdaptedModel { id, adapter_id, features, max_output_tokens, presentation }`
+声明一个受管适配器提供的公开模型，不要求内置 Provider 的原生目录存在同名条目
+
+- `adapter_id` 必须指向同实例已绑定的 `upstream_adapter`，Provider 与非空账号集合取自该适配器声明
+- 适配器及 binding 的模型范围必须覆盖 `id`；带 Key／账号组条件的适配器不能贡献静态目录，不能丢弃这些条件扩大可见范围
+- `features` 使用 `RequestFeature`，仅为生成操作声明工具、图片输入、推理或 JSON Schema 支持；没有声明的能力不能借用同名原生模型的支持事实
+- `presentation` 是独立通用画像，字段见 `call::catalog::ModelPresentation`；省略的布尔能力为 false，未声明推理档位不补猜
+- 同名条目可关联不同账号，但 Provider、能力及画像须一致，账号集合不能重叠，也不能与插件直接别名同名，以免展示与实际选择产生歧义
+- 别名与适配模型每实例合计最多 256 条，注册响应载荷最多 64 KiB；目录与适配器随同一代次发布，账号最终资格取当前 Key、分组及账号模型政策的交集
+
+清单须显式声明 `model_catalog.version = 2`，可使用上述 `.model_catalog(...)` 固定目录，
+或通过 `PluginBuilder::on(methods::MODEL_CATALOG_REGISTER_V2, handler)` 返回 `TypedReply<ModelCatalogRegistrationV2>`。
+
+原生 Codex 目录成功返回后，宿主保留其中的完整对象，只追加可见且尚未出现的适配模型画像；原生读取错误仍向调用方返回错误。
+适配模型的 wire 模型名、协议编解码及摘要由插件负责，宿主只使用公开 ID、能力和账号范围参与现有选号，不生成请求正文或转换历史
 
 ### 重试决策
 
@@ -550,7 +602,7 @@ let plugin = PluginBuilder::from_json(include_bytes!("../plugin.json"))?
     .build()?;
 ```
 
-按 binding 顺序、插件 ID、实例 ID 确定委托链，首个非委托决定交给 Core 处理。整条链最多等待 2 秒，并受请求剩余期限约束。
+按 binding 顺序、插件 ID、实例 ID 确定委托链，首个非委托决定交给 Core 处理。整条链共享匹配实例中最大的重试阶段预算，并受请求剩余期限约束；单个实例同时受自身声明预算约束。未声明时使用默认的 2 秒，预算规则见 [并发与期限](../README.md#并发与期限)。
 退出、超时或无法解码的决定委托后续处理，最终回到宿主决定；额外字段忽略，故障不改写原始上游错误。
 middleware 的 `next` 最多调用一次，重试与额外模型执行通过独立调用创建
 
